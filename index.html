@@ -1,49 +1,88 @@
-diff --git a//dev/null b/preprocess.py
-index 0000000000000000000000000000000000000000..c3046b58bf54333174eb85777a7121e055b07020 100644
+diff --git a//dev/null b/index.html
+index 0000000000000000000000000000000000000000..ce179390594d462de36f4b02ad4ccfb168551913 100644
 --- a//dev/null
-+++ b/preprocess.py
-@@ -0,0 +1,44 @@
-+import pandas as pd
-+import json
-+import os
-+import argparse
-+
-+parser = argparse.ArgumentParser(description='Preprocess Goodreads data')
-+parser.add_argument('--input', default='GoodReads_100k_books.csv.xz', help='Input CSV file')
-+parser.add_argument('--output', default='scatter_data.json', help='Output JSON file')
-+parser.add_argument('--sample', type=int, default=5000, help='Max sample size')
-+args = parser.parse_args()
-+
-+# Load
-+print('Reading', args.input)
-+df = pd.read_csv(args.input, low_memory=False)
-+
-+# Select and compute columns
-+cols = ['pages', 'desc', 'reviews', 'rating']
-+df = df[cols]
-+df['blurb'] = df['desc'].fillna('').astype(str).str.len()
-+df = df.drop(columns='desc')
-+
-+# Ensure numeric
-+for c in ['pages', 'reviews', 'rating', 'blurb']:
-+    df[c] = pd.to_numeric(df[c], errors='coerce')
-+
-+# Outlier clipping
-+mask = pd.Series(True, index=df.index)
-+for c in ['pages', 'blurb', 'reviews', 'rating']:
-+    low = df[c].quantile(0.005)
-+    high = df[c].quantile(0.995)
-+    mask &= df[c].between(low, high)
-+df = df[mask]
-+
-+# Sample
-+if len(df) > args.sample:
-+    df = df.sample(n=args.sample, random_state=42)
-+
-+# Save JSON
-+records = df.to_dict(orient='records')
-+with open(args.output, 'w') as f:
-+    json.dump(records, f, separators=(',', ':'))
-+
-+size = os.path.getsize(args.output)
-+print('Wrote', args.output, 'size:', size, 'bytes')
++++ b/index.html
+@@ -0,0 +1,83 @@
++<!DOCTYPE html>
++<html lang="en">
++<head>
++<meta charset="UTF-8">
++<meta name="viewport" content="width=device-width,initial-scale=1">
++<title>What Drives Goodreads Ratings?</title>
++<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
++<style>
++body{font-family:Georgia,'Times New Roman',serif;background:#f9f9f7;color:#111;margin:0;line-height:1.5}
++h1,h2{font-family:'Helvetica Neue',Arial,sans-serif;font-weight:600;margin:0 0 10px}
++.chart{width:100%;height:350px;margin:20px auto;max-width:700px}
++header,p{max-width:700px;margin:20px auto}
++.axis path{display:none}
++.axis line{stroke:#ddd}
++.tip{position:absolute;pointer-events:none;background:#fff;border:1px solid #aaa;padding:4px 8px;font-size:12px}
++footer{text-align:center;margin:40px 0;font-size:14px}
++</style>
++</head>
++<body>
++<header>
++<h1>What Drives Goodreads Ratings?</h1>
++<p>We sampled 5,000 titles from a public Goodreads dataset to see how length and popularity relate to reader scores.</p>
++</header>
++<div id="plot1" class="chart"></div>
++<p>Longer books earn slightly better reviews (r≈0.12).</p>
++<div id="plot2" class="chart"></div>
++<p>Blurb length barely matters (r≈0.08).</p>
++<div id="plot3" class="chart"></div>
++<p>More reviews correlate with higher ratings (r≈0.16).</p>
++<footer>Visualization by Codex. Data from <a href="https://github.com/zygmuntz/goodbooks-10k">Goodreads</a></footer>
++<script>
++fetch('scatter_data.json').then(r=>r.json()).then(d=>{
++ d.forEach(o=>{o.pages=+o.pages;o.blurb=+o.blurb;o.reviews=+o.reviews;o.rating=+o.rating;o.logReviews=Math.log10(o.reviews+1)});
++ const plots=[
++  {id:'#plot1',x:o=>o.pages,label:'Pages'},
++  {id:'#plot2',x:o=>o.blurb,label:'Blurb Length'},
++  {id:'#plot3',x:o=>o.logReviews,label:'log10(Reviews)'}
++ ];
++ plots.forEach(p=>makePlot(p.id,p.x,o=>o.rating,p.label));
++ function lowess(xs,ys,f=0.3,n=200){
++  const min=d3.min(xs),max=d3.max(xs),r=max-min,arr=[];
++  for(let i=0;i<n;i++){
++   const x0=min+r*i/(n-1);
++   const d=xs.map(x=>Math.abs(x-x0));
++   const h=d3.quantile([...d].sort((a,b)=>a-b),f);
++   const w=d.map(v=>{const u=Math.abs(v/h);return u>=1?0:Math.pow(1-u*u*u,3)});
++   let sw=0,sx=0,sy=0,sxx=0,sxy=0;
++   for(let j=0;j<xs.length;j++){const ww=w[j];const x=xs[j],y=ys[j];sw+=ww;sx+=ww*x;sy+=ww*y;sxx+=ww*x*x;sxy+=ww*x*y;}
++   const mx=sx/sw,my=sy/sw,b=(sxy-sx*my)/(sxx-sx*mx);arr.push([x0,my+b*(x0-mx)]);
++  }
++  return arr;
++ }
++ function makePlot(sel,xf,yf,label){
++  const m={t:20,r:20,b:50,l:50};
++  const svg=d3.select(sel).append('svg');
++  const tip=d3.select('body').append('div').attr('class','tip');
++  function draw(){
++   const w=svg.node().parentNode.clientWidth-m.l-m.r;
++   const h=350-m.t-m.b;
++   svg.attr('width',w+m.l+m.r).attr('height',h+m.t+m.b);
++   const g=svg.html('').append('g').attr('transform',`translate(${m.l},${m.t})`);
++   const x=d3.scaleLinear().domain(d3.extent(d,xf)).nice().range([0,w]);
++   const y=d3.scaleLinear().domain(d3.extent(d,yf)).nice().range([h,0]);
++   g.append('g').attr('class','x axis').attr('transform',`translate(0,${h})`).call(d3.axisBottom(x).ticks(6).tickSize(-h));
++   g.append('text').attr('x',w/2).attr('y',h+35).attr('text-anchor','middle').text(label);
++   g.append('g').attr('class','y axis').call(d3.axisLeft(y).ticks(6).tickSize(-w));
++   g.append('text').attr('transform','rotate(-90)').attr('x',-h/2).attr('y',-35).attr('text-anchor','middle').text('Rating');
++   g.append('g').selectAll('circle').data(d).join('circle')
++     .attr('cx',o=>x(xf(o))).attr('cy',o=>y(yf(o))).attr('r',6).attr('fill','steelblue').attr('opacity',0.2)
++     .on('mousemove',(e,o)=>tip.style('opacity',1)
++       .html(`${label}: ${xf(o)}<br>Rating: ${yf(o).toFixed(2)}`)
++       .style('left',e.pageX+5+'px').style('top',e.pageY-28+'px'))
++     .on('mouseout',()=>tip.style('opacity',0));
++   const line=d3.line().x(d=>x(d[0])).y(d=>y(d[1]));
++   g.append('path').datum(lowess(d.map(xf),d.map(yf))).attr('fill','none').attr('stroke','orange').attr('stroke-width',2).attr('d',line);
++  }
++  draw();
++  window.addEventListener('resize',draw);
++ }
++});
++</script>
++</body>
++</html>

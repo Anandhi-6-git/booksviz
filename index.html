@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GoodReads Book Scatterplots</title>
+<style>
+ body{font-family:'Segoe UI','Roboto',sans-serif;background:#fafafa;color:#111;margin:0}
+ svg{width:100%;height:350px;display:block}
+ .grid line{stroke:#ccc;stroke-opacity:0.5;shape-rendering:crispEdges}
+ .tooltip{position:absolute;background:#fff;border:1px solid #999;padding:4px;font-size:12px;pointer-events:none;opacity:0}
+ footer{padding:10px;text-align:center;font-size:14px}
+ a{color:#06c}
+</style>
+</head>
+<body>
+<div id="plot1"></div>
+<div id="plot2"></div>
+<div id="plot3"></div>
+<footer>Visualization by <a href="https://openai.com">OpenAI Codex</a>. Data from <a href="https://goodreads.com">GoodReads</a>.</footer>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+fetch('scatter_data.json').then(r=>r.json()).then(data=>{
+ const plots=[
+  {id:'#plot1',x:d=>d.pages,y:d=>d.rating,xLab:'Pages',yLab:'Rating'},
+  {id:'#plot2',x:d=>d.blurb,y:d=>d.rating,xLab:'Blurb Length',yLab:'Rating'},
+  {id:'#plot3',x:d=>Math.log10(d.reviews+1),y:d=>d.rating,xLab:'log10(Reviews)',yLab:'Rating'}
+ ];
+ const tip=d3.select('body').append('div').attr('class','tooltip');
+ function loess(arr,xF,yF,bw,steps){
+  const pts=arr.map(d=>[xF(d),yF(d)]).sort((a,b)=>a[0]-b[0]);
+  const n=pts.length,r=Math.floor(bw*n),x0=pts[0][0],x1=pts[n-1][0],res=[];
+  for(let i=0;i<steps;i++){
+   const x=x0+(x1-x0)*i/(steps-1);
+   const dist=pts.map(p=>Math.abs(p[0]-x));
+   const h=[...dist].sort((a,b)=>a-b)[r];
+   let ws=0,wx=0,wy=0,wx2=0,wxy=0;
+   for(let j=0;j<n;j++){
+    const w=tricube(dist[j]/h);const px=pts[j][0],py=pts[j][1];
+    ws+=w;wx+=w*px;wy+=w*py;wx2+=w*px*px;wxy+=w*px*py;
+   }
+   const beta=(wxy-wx*wy/ws)/(wx2-wx*wx/ws);const alpha=wy/ws-beta*wx/ws;
+   res.push([x,alpha+beta*x]);
+  }
+  return res;
+ }
+ function tricube(t){t=1-Math.min(1,Math.abs(t))**3;return t*t*t;}
+ function draw(){
+  plots.forEach(p=>{
+   const c=d3.select(p.id);c.selectAll('svg').remove();
+   const w=c.node().clientWidth,h=350,m=40;
+   const x=d3.scaleLinear().range([m,w-m]).domain(d3.extent(data,p.x));
+   const y=d3.scaleLinear().range([h-m,m]).domain(d3.extent(data,p.y));
+   const svg=c.append('svg');
+   const gx=svg.append('g').attr('transform',`translate(0,${h-m})`).call(d3.axisBottom(x).ticks(5).tickSize(-h+2*m));
+   const gy=svg.append('g').attr('transform',`translate(${m},0)`).call(d3.axisLeft(y).ticks(5).tickSize(-w+2*m));
+   gx.selectAll('line').attr('stroke','#ccc');gy.selectAll('line').attr('stroke','#ccc');
+   svg.append('g').selectAll('circle').data(data).enter().append('circle')
+    .attr('cx',d=>x(p.x(d))).attr('cy',d=>y(p.y(d))).attr('r',3)
+    .attr('fill','steelblue').attr('fill-opacity',0.2)
+    .on('mouseover',(_,d)=>tip.style('opacity',1).html(`${p.xLab}: ${p.x(d)}<br>${p.yLab}: ${p.y(d)}`))
+    .on('mousemove',e=>tip.style('left',e.pageX+10+'px').style('top',e.pageY+10+'px'))
+    .on('mouseout',()=>tip.style('opacity',0));
+   const line=d3.line().x(d=>x(d[0])).y(d=>y(d[1]));
+   svg.append('path').attr('d',line(loess(data,p.x,p.y,0.3,80)))
+    .attr('fill','none').attr('stroke','orange').attr('stroke-width',2);
+  });
+ }
+ draw();
+ window.addEventListener('resize',draw);
+});
+</script>
+</body>
+</html>
